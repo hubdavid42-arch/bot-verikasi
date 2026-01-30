@@ -18,44 +18,56 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-// Biar error ketangkep dan Railway gak bikin loop crash tanpa info
+// anti crash biar error keliatan di logs
 process.on("unhandledRejection", (err) => console.error("unhandledRejection:", err));
 process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
 
 client.once("ready", async () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
-  console.log("ENV CHECK:", {
-    hasTOKEN: Boolean(TOKEN),
+  console.log("ENV:", {
+    hasTOKEN: !!TOKEN,
     VERIFY_CHANNEL_ID,
     VERIFY_ROLE_ID,
   });
 
   if (!TOKEN || !VERIFY_CHANNEL_ID || !VERIFY_ROLE_ID) {
-    console.log("❌ ERROR: Ada ENV yang kosong. Cek Railway Variables.");
+    console.log("❌ ERROR: TOKEN / VERIFY_CHANNEL_ID / VERIFY_ROLE_ID ada yang kosong di Railway Variables.");
     return;
   }
 
-  // Ambil channel verify
-  let channel = null;
+  // 1) fetch channel
+  let channel;
   try {
     channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
   } catch (err) {
-    console.log("❌ Gagal fetch channel verify. Cek VERIFY_CHANNEL_ID / izin bot.");
+    console.log("❌ ERROR: Gagal fetch channel. (ID salah / bot gak punya akses)");
     console.log("DETAIL:", err?.message || err);
     return;
   }
 
   if (!channel) {
-    console.log("❌ Channel verify = null. Cek VERIFY_CHANNEL_ID.");
+    console.log("❌ ERROR: channel = null. VERIFY_CHANNEL_ID kemungkinan salah.");
     return;
   }
 
-  // Coba kirim panel (anti crash)
+  console.log(`✅ Channel ketemu: #${channel.name}`);
+
+  // 2) test send (kalau ini gak muncul, berarti permission send messages/embeds)
+  try {
+    await channel.send("✅ TEST: Bot bisa kirim pesan di sini.");
+    console.log("✅ Test message terkirim.");
+  } catch (err) {
+    console.log("❌ ERROR: Bot gak bisa kirim pesan ke channel (cek View Channel / Send Messages).");
+    console.log("DETAIL:", err?.message || err);
+    return;
+  }
+
+  // 3) send panel verify (embed + button)
   try {
     const embed = new EmbedBuilder()
       .setTitle("🔒 Verifikasi Dulu")
-      .setDescription("Klik tombol **✅ Verify** untuk membuka semua channel.")
-      .setFooter({ text: "Jika tombol tidak berfungsi, hubungi admin." });
+      .setDescription("Klik tombol **✅ Verify** untuk membuka semua channel server.")
+      .setFooter({ text: "Verify System" });
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -65,9 +77,9 @@ client.once("ready", async () => {
     );
 
     await channel.send({ embeds: [embed], components: [row] });
-    console.log("✅ Panel verify terkirim ke channel:", channel.name);
+    console.log("✅ Panel verify terkirim.");
   } catch (err) {
-    console.log("❌ Gagal send panel. Biasanya karena izin channel (Send Messages / Embed Links).");
+    console.log("❌ ERROR: Gagal kirim panel (biasanya karena izin Embed Links).");
     console.log("DETAIL:", err?.message || err);
   }
 });
@@ -79,50 +91,39 @@ client.on("interactionCreate", async (interaction) => {
 
     const role = interaction.guild.roles.cache.get(VERIFY_ROLE_ID);
     if (!role) {
-      return interaction.reply({
-        content: "❌ VERIFY_ROLE_ID salah / role tidak ketemu.",
-        ephemeral: true,
-      });
+      return interaction.reply({ content: "❌ Role Verified tidak ketemu. Cek VERIFY_ROLE_ID.", ephemeral: true });
     }
 
     const me = interaction.guild.members.me;
 
-    // permission manage roles
     if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
-      return interaction.reply({
-        content: "❌ Bot tidak punya izin **Manage Roles**.",
-        ephemeral: true,
-      });
+      return interaction.reply({ content: "❌ Bot tidak punya izin Manage Roles.", ephemeral: true });
     }
 
-    // role bot harus di atas role verified
     if (me.roles.highest.position <= role.position) {
       return interaction.reply({
-        content: "❌ Role bot harus di atas role **Verified** (Server Settings → Roles).",
+        content: "❌ Role bot harus di atas role Verified (Server Settings → Roles).",
         ephemeral: true,
       });
     }
 
-    // sudah verified?
     if (interaction.member.roles.cache.has(VERIFY_ROLE_ID)) {
       return interaction.reply({ content: "✅ Kamu sudah verified.", ephemeral: true });
     }
 
-    await interaction.member.roles.add(VERIFY_ROLE_ID, "User verified via button");
+    await interaction.member.roles.add(role, "Verified via button");
 
-    // DM (opsional)
     try {
       await interaction.user.send("🎉 Kamu berhasil Verified! Sekarang semua channel terbuka.");
     } catch {}
 
-    return interaction.reply({ content: "✅ Verified! Channel sudah kebuka.", ephemeral: true });
+    return interaction.reply({ content: "✅ Verified sukses!", ephemeral: true });
   } catch (err) {
     console.log("❌ interaction error:", err?.message || err);
-    // jangan crash
   }
 });
 
 client.login(TOKEN).catch((err) => {
-  console.log("❌ Login gagal. Biasanya TOKEN salah.");
+  console.log("❌ LOGIN GAGAL (TOKEN salah).");
   console.log("DETAIL:", err?.message || err);
 });
