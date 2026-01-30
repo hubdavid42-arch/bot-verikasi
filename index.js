@@ -1,167 +1,88 @@
 const {
   Client,
   GatewayIntentBits,
-  Routes,
-  REST,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  PermissionsBitField,
   EmbedBuilder,
+  PermissionsBitField,
 } = require("discord.js");
 
-// ✅ Ambil dari Railway Variables
 const TOKEN = process.env.TOKEN;
-const GUILD_ID = process.env.GUILD_ID;
-
 const VERIFY_ROLE_ID = process.env.VERIFY_ROLE_ID;
-const UNVERIFIED_ROLE_ID = process.env.UNVERIFIED_ROLE_ID;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-const VERIFY_BUTTON_ID = "verify_button";
+const VERIFY_BUTTON_ID = "verify_button_v1";
 
-
-// ✅ AUTO ROLE Unverified saat member join
-client.on("guildMemberAdd", async (member) => {
-  const role = member.guild.roles.cache.get(UNVERIFIED_ROLE_ID);
-
-  if (role) {
-    await member.roles.add(role);
-    console.log(`✅ Member baru masuk → diberi role Unverified`);
-  }
-});
-
-
-// ✅ BOT READY
 client.once("ready", async () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
 
-  // Register Slash Command
-  const commands = [
-    {
-      name: "setup-verify",
-      description: "Kirim tombol verify ke channel verify",
-    },
-  ];
+  // Ambil channel verify
+  const channel = await client.channels.fetch(VERIFY_CHANNEL_ID).catch(() => null);
+  if (!channel) {
+    console.log("❌ VERIFY_CHANNEL_ID salah / channel tidak ketemu");
+    return;
+  }
 
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  // Kirim panel verifikasi otomatis
+  const embed = new EmbedBuilder()
+    .setTitle("🔒 Verifikasi Dulu")
+    .setDescription("Klik tombol **✅ Verify** untuk membuka semua channel.")
+    .setFooter({ text: "Jika tombol tidak berfungsi, hubungi admin." });
 
-  await rest.put(
-    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    { body: commands }
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(VERIFY_BUTTON_ID)
+      .setLabel("✅ Verify")
+      .setStyle(ButtonStyle.Success)
   );
 
-  console.log("✅ Command /setup-verify aktif!");
+  await channel.send({ embeds: [embed], components: [row] });
+  console.log("✅ Panel verify terkirim ke channel verifikasi");
 });
 
-
-// ✅ INTERACTION HANDLER
 client.on("interactionCreate", async (interaction) => {
   try {
-    // ✅ Slash command setup
-    if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === "setup-verify") {
+    if (!interaction.isButton()) return;
+    if (interaction.customId !== VERIFY_BUTTON_ID) return;
 
-        // Cek admin
-        if (
-          !interaction.memberPermissions.has(
-            PermissionsBitField.Flags.Administrator
-          )
-        ) {
-          return interaction.reply({
-            content: "❌ Kamu bukan admin!",
-            ephemeral: true,
-          });
-        }
-
-        const channel =
-          interaction.guild.channels.cache.get(VERIFY_CHANNEL_ID);
-
-        if (!channel)
-          return interaction.reply({
-            content: "❌ Channel verify tidak ditemukan!",
-            ephemeral: true,
-          });
-
-        // Embed message
-        const embed = new EmbedBuilder()
-          .setTitle("✅ Verifikasi Server")
-          .setDescription(
-            "Klik tombol di bawah untuk mendapatkan akses semua channel!"
-          )
-          .setFooter({ text: "Bot Verify System" });
-
-        // Button verify
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(VERIFY_BUTTON_ID)
-            .setLabel("✅ Verify")
-            .setStyle(ButtonStyle.Success)
-        );
-
-        // Kirim panel
-        await channel.send({ embeds: [embed], components: [row] });
-
-        return interaction.reply({
-          content: "✅ Panel verifikasi berhasil dikirim!",
-          ephemeral: true,
-        });
-      }
+    const role = interaction.guild.roles.cache.get(VERIFY_ROLE_ID);
+    if (!role) {
+      return interaction.reply({ content: "❌ VERIFY_ROLE_ID salah / role tidak ketemu.", ephemeral: true });
     }
 
-    // ✅ Button Verify Click
-    if (interaction.isButton()) {
-      if (interaction.customId === VERIFY_BUTTON_ID) {
-        const member = interaction.member;
-
-        // Role Verified
-        const verifiedRole =
-          interaction.guild.roles.cache.get(VERIFY_ROLE_ID);
-
-        // Role Unverified
-        const unverifiedRole =
-          interaction.guild.roles.cache.get(UNVERIFIED_ROLE_ID);
-
-        // ✅ Remove Unverified
-        if (unverifiedRole) {
-          await member.roles.remove(unverifiedRole);
-        }
-
-        // ✅ Add Verified
-        if (verifiedRole) {
-          await member.roles.add(verifiedRole);
-        }
-
-        // ✅ Kirim DM ke user
-        try {
-          await interaction.user.send(
-            "🎉 Kamu berhasil Verified! Sekarang bisa akses semua channel 😄"
-          );
-        } catch {
-          // Kalau DM off, mention di channel verify
-          const channel =
-            interaction.guild.channels.cache.get(VERIFY_CHANNEL_ID);
-
-          channel.send(
-            `✅ ${member} berhasil Verified!`
-          );
-        }
-
-        return interaction.reply({
-          content: "✅ Kamu sudah Verified!",
-          ephemeral: true,
-        });
-      }
+    // cek bot permission
+    const me = interaction.guild.members.me;
+    if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+      return interaction.reply({ content: "❌ Bot tidak punya izin Manage Roles.", ephemeral: true });
     }
+    if (me.roles.highest.position <= role.position) {
+      return interaction.reply({
+        content: "❌ Role bot harus di atas role Verified (Server Settings → Roles).",
+        ephemeral: true,
+      });
+    }
+
+    // kasih role
+    if (interaction.member.roles.cache.has(VERIFY_ROLE_ID)) {
+      return interaction.reply({ content: "✅ Kamu sudah verified.", ephemeral: true });
+    }
+
+    await interaction.member.roles.add(VERIFY_ROLE_ID, "User verified via button");
+
+    // DM setelah verified (kalau gagal, gak apa-apa)
+    try {
+      await interaction.user.send("🎉 Kamu berhasil Verified! Sekarang semua channel sudah terbuka.");
+    } catch {}
+
+    return interaction.reply({ content: "✅ Verified! Channel sudah kebuka.", ephemeral: true });
   } catch (err) {
-    console.log("ERROR:", err);
+    console.log(err);
   }
 });
 
-
-// ✅ LOGIN BOT
 client.login(TOKEN);
